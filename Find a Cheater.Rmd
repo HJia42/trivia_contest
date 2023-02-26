@@ -1,0 +1,472 @@
+---
+title: "Find a Cheater"
+author: "Harrison Jia"
+date: "5/9/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("haven")
+library("dplyr")
+library("ggplot2")
+library(reshape)
+library(corrplot)
+
+`%notin%` <- Negate(`%in%`)
+```
+
+```{r echo=FALSE}
+reg_data = read_dta("/Users/harr/Downloads/regular_seasons.dta")
+champ_data = read_dta("/Users/harr/Downloads/championships.dta")
+qual_data = read_dta("/Users/harr/Downloads/2020_qualifiers.dta")
+```
+
+
+General distribution of percent correct for each person who has competed in this triva league.
+```{r echo=FALSE}
+reg_prop <-
+  reg_data %>%
+  group_by(user_id, season) %>%
+  summarise(prop_correct = mean(correct))
+ggplot(reg_prop, aes(prop_correct)) +
+  geom_histogram(color="black", fill="white")
+```
+
+
+Genderal distribution of percent correct for each person who competed in the championship round.
+```{r echo=FALSE}
+champ_prop <-
+  champ_data %>%
+  group_by(id, year) %>%
+  summarise(prop_correct = mean(correct))
+ggplot(champ_prop, aes(prop_correct)) +
+  geom_histogram(color="black", fill="white")
+```
+We have a similar mean it seems but we do need to account for the fact that the people in the championship round likely were towards the right side of the bell curve in the first graph.
+
+
+```{r echo=FALSE}
+l = unique(champ_data$id)
+
+champ_reg_data <-
+  reg_data %>%
+  filter(`user_id` %in% l)
+```
+
+For each person who made it into the championchips in a given year, what was their correct rate specifically for that year?
+
+Ordering by year given the season, yeilds the following results.
+```{r echo=FALSE}
+l = unique(champ_data$id)
+
+champ_reg_data <-
+  reg_data %>%
+  filter(`user_id` %in% l)
+champ_reg_data <-
+  champ_reg_data %>%
+  group_by(user_id, season) #%>%
+  #summarise(prop_correct = mean(correct))
+champ_reg_data <- 
+  champ_reg_data %>%
+  mutate(year = (season - 72) %/% 4 + 2017)
+champreg_byyear <-
+  champ_reg_data %>%
+  group_by(user_id, year) %>%
+  summarise(prop_correct = mean(correct))
+```
+
+Interesting to see that there seems to be a slow increase on average per year for those have gotten to the championships at least once.
+
+```{r echo=FALSE}
+for(i in seq(2017,2020,1)) {
+  print(mean(champreg_byyear[champreg_byyear$year == i,]$prop_correct))
+}
+```
+Are questions getting easier or people getting better? Or maybe just pure noise and that the average is around the same as before.
+
+Since championship data gives us data on when each person attended the finals, we should see if on average there is a difference in regular season scores for years they do go vs years they don't.
+
+```{r echo=FALSE}
+inlst = c()
+notinlst = c()
+for(i in l) {
+  curr_years = champ_prop[champ_prop$id == i,]$year
+  inlst = append(inlst, mean(champreg_byyear[champreg_byyear$user_id == i & champreg_byyear$year %in% curr_years,]$prop_correct))
+  notinlst = append(notinlst, mean(champreg_byyear[champreg_byyear$user_id == i & champreg_byyear$year %notin% curr_years,]$prop_correct))
+}
+
+indf = data.frame(inlst)
+indf$qual = "yes"
+notindf = data.frame(notinlst)
+notindf$qual = "no"
+names(indf)[names(indf) == "inlst"] = "prop_correct"
+names(notindf)[names(notindf) == "notinlst"] <- "prop_correct"
+fulldf = rbind(indf, notindf)
+ggplot(fulldf, aes(prop_correct, fill = qual)) + geom_density(alpha = 0.5)
+```
+We see that there seems to be a marginally better performance when they do but the difference here looks really small.
+
+They both also have very simimlar variance values (in turn SD should be similar as well). This is also true for the mean (printed first here).
+```{r echo=FALSE}
+mean(inlst)
+mean(notinlst)
+var(inlst)
+var(notinlst)
+```
+Printed in order of mean of scores in year of qualification, mean of scores in year did not attend or not qualify, variance in respective order.
+
+So far on a macro scale, it seems that performance per year and relative to attending the finals are nearly in distiguishable. It can very possibly just be a result of a low percentage of people actually cheating or did so for all the years. Likewise if there are those who chose to cheat and changed from not cheating before and that they make up a lower percentage then by CLT and LLN it may be nearly impossible to see them in a full distribution. 
+
+
+
+
+# Correlation between subjects?
+
+```{r echo=FALSE}
+corr_regdata <-
+  reg_data %>%
+  group_by(user_id, category) %>%
+  summarise(prop_correct = mean(correct))
+```
+
+```{r echo=FALSE}
+ccorr_regdata = cast(corr_regdata, user_id ~ category)
+```
+
+Clearly we can see that there is. Math correlates heavily with science as one might expect but relative to others with each other it underperforms in every other subject especiall pop music. There may be a few places with values close to 0 or uncorrelated with each other, but there is no insance where there is any negative correlation.
+
+```{r echo=FALSE}
+M = cor(ccorr_regdata, use = "complete.obs")
+corrplot(M, method = "color")
+```
+
+Now if we focus only on those who made it to the championship rounds, we get much less correlation all around and now also see some negative correlation.
+```{r echo=FALSE}
+corr_champ_regdata <-
+  champ_reg_data %>%
+  group_by(user_id, category) %>%
+  summarise(prop_correct = mean(correct))
+ccorr_champ_regdata = cast(corr_champ_regdata, user_id ~ category)
+champ_M = cor(ccorr_champ_regdata)
+corrplot(champ_M, method = "color")
+```
+
+# How much do scores vary for chose in championship and not?
+
+For those who have made it at least once in 2018 or 2019, the standard dev are given below
+```{r echo=FALSE}
+var_lst = c()
+for (i in l) {
+  var_lst = append(var_lst, sd(champreg_byyear[champreg_byyear$user_id == i,]$prop_correct))
+}
+hist(var_lst, breaks = 64)
+```
+Interesting to see a few values far away from the rest
+
+Let's examine the one person that is at the far right, we will see what their standard dev is and scores were in the championship and what their scores were for the years they participated in the regular season.
+```{r echo=FALSE}
+max(var_lst)
+which.max(var_lst)
+l[201]
+champ_prop[champ_prop$id == 18337,]$prop_correct
+champ_prop[champ_prop$id == 18337,]$year
+champreg_byyear[champreg_byyear$user_id == 18337,]$prop_correct
+```
+He/She (id = 18337) went to the finals in 2019, at the time they scored around 84% accuracy the highest they have ever done. Also interesting is that he/she scored 36% in 2017. Interesting.
+
+Examining 18337's stats based on category and year
+```{r echo=FALSE}
+susdata = champ_reg_data[champ_reg_data$user_id == 18337,]
+sus_year <-
+  susdata %>%
+  group_by(category, year) %>%
+  summarise(prop_correct = mean(correct))
+sus_year
+```
+Interestingly, the jump between 2017 to years after is all around the same - that he/she improved the same amount is so many categories except GAMES/SPORT (a bit less), MATH (constient but still low raw %) and Science. Subjects that may be harder to search for online.
+
+```{r echo=FALSE}
+sus_year[sus_year$category %in% c('MATH', 'SCIENCE', 'GAMES/SPORT'),]
+
+ggplot(sus_year, aes(year, prop_correct))+geom_line(aes(color=category))
+```
+Although messy, we can see the clear distinct change in math vs the rest and gaming/sport and science als violating the natural growth in a lesser extent.
+
+It seems quite clear that this person is cheating, some pointers to learn from this so far is that this likely cheater improved alot within 1 year, could not cheat his/her way through math the same way while he could with gaming and science but also relative to the other subject much less so as well. Either improved his/her math skills or learned to cheat better in math (this pattern is alto true with science).
+
+This variance based analysis may spot some easy to detect cheaters but if a cheater started in 2017 or earlier, they would not be seen as easily.
+
+How about the regular season and the people who did not qualify?
+```{r echo=FALSE}
+varreg_lst = c()
+
+n_reg_data <-
+  reg_data %>%
+  group_by(user_id) %>%
+  mutate(count_questions = n())
+
+n_reg = n_reg_data[n_reg_data$count_questions > 450,]
+
+n_reg <- 
+  n_reg %>%
+  mutate(year = (season - 72) %/% 4 + 2017)
+
+n_reg_prop <-
+  n_reg %>%
+  group_by(user_id, year) %>%
+  summarise(prop_correct = mean(correct))
+
+n_reg_prop_1 <-
+  n_reg_prop %>%
+  group_by(user_id) %>%
+  mutate(sd_score = sd(prop_correct)) %>%
+  arrange(-sd_score)
+```
+
+```{r echo=FALSE}
+hist(unique(n_reg_prop_1$sd_score), breaks = 32)
+```
+
+
+Now what about the questions themselves?
+
+We see that relative difficulty is not determined by the question number.
+```{r echo=FALSE}
+reg_ques <-
+  reg_data %>%
+  group_by(question) %>%
+  summarise(prop_correct = mean(correct))
+reg_ques
+```
+
+However question difficulty varies around the mean of about 0.5.
+```{r echo=FALSE}
+reg_ques <-
+  reg_data %>%
+  group_by(season, match, question) %>%
+  summarise(prop_correct = mean(correct))
+ggplot(reg_ques, aes(prop_correct)) +
+  geom_histogram(color="black", fill="white")
+```
+
+Non-qualifiers regular season data.
+```{r echo=FALSE}
+reg_only_data = reg_data[reg_data$user_id %notin% l, ]
+reg_only <-
+  reg_only_data %>%
+  group_by(season, match, question) %>%
+  summarise(prop_correct = mean(correct))
+ggplot(reg_only, aes(prop_correct)) +
+  geom_histogram(color="black", fill="white")
+```
+
+Qualifiers' regular season data.
+```{r echo=FALSE}
+champ_reg_ques <-
+  champ_reg_data %>%
+  group_by(season, match, question) %>%
+  summarise(prop_correct = mean(correct))
+ggplot(champ_reg_ques, aes(prop_correct)) +
+  geom_histogram(color="black", fill="white")
+```
+
+Difference in proportion correct based on those who qualified and those who didn't.
+```{r echo=FALSE}
+reg_only$champ_prop_correct = champ_reg_ques$prop_correct
+
+hist(reg_only$champ_prop_correct - reg_only$prop_correct)
+```
+
+How about proportion correct by category?
+
+We can see that for all regular season players the proportion correct varies a bit around the mean of about 0.5 whereas generally chose who make it to the finals do around 0.25 better with some variance as well.
+
+```{r echo=FALSE}
+reg_bycat <- 
+  reg_data %>%
+  group_by(category) %>%
+  summarise(prop_correct = mean(correct))
+
+champ_reg_bycat <- 
+  champ_reg_data %>%
+  group_by(category) %>%
+  summarise(prop_correct = mean(correct))
+
+reg_bycat$champ_diff = champ_reg_bycat$prop_correct - reg_bycat$prop_correct
+reg_bycat
+```
+
+What about the relation between the two?
+
+We can see that generally questions are easy for most of championship quallifiers before around the 0.30 mark where it sharply decresses from there.
+```{r echo=FALSE}
+reg_only$prop_diff = reg_only$champ_prop_correct - reg_only$prop_correct
+
+ggplot(reg_only, aes(x = prop_correct, y = champ_prop_correct)) + geom_point()
+```
+Interesting to note: Questions that have relatively higher correct rate among championship qualifiers and lower overall correct rate may tell us the most about who makes it or not, we would need to dig deeper to examine this.
+
+Percentile of the distributions for no qualifiers only and and qualifiers only.
+```{r echo=FALSE}
+quantile(reg_only$prop_correct)
+quantile(reg_only$champ_prop_correct)
+```
+
+
+Predicting the likelihood that a certain questions is answered or not by a person within this field. To do this we will use mostly things we discovered towards the latter half of the data exploration. We have some leads such as the difference in question difficulty depending on what your average score is and if you made it to the championship rounds. It may be a bit hard to examine or determine a relation between specific question types with person as this may lead to serious multicolinearity issues as we saw above.
+
+```{r echo=FALSE}
+reg_only$big_diff = ifelse(reg_only$prop_diff > 0.3, 1, 0)
+reg_only$is_hard = ifelse(reg_only$prop_correct < 0.20, 1, 0)
+reg_only$is_easy = ifelse(reg_only$prop_correct > 0.6, 1, 0)
+```
+
+Take only those with 450 questions answered or more to minimize data overloading on computer as well as negating effects of smaller sample sizes.
+```{r echo=FALSE}
+df_test = dplyr::inner_join(n_reg, reg_only, by = c('season', 'match', 'question'))
+```
+
+```{r echo=FALSE}
+df_samller <- subset(df_test, select = -c(count_questions, prop_correct, champ_prop_correct, category))
+df_smaller <-
+  df_samller %>%
+  group_by(user_id, big_diff, is_hard, is_easy) %>%
+  summarise(prop_correct = mean(correct))
+```
+
+Given a questions that has a large difference (or not) and is easy or hard relative to the population what is the liklihood that someone will get a question right?
+Here big diff is synonymous for will there be a large effect given that someone scored high enough to make it to the finals round or not. Using the symmetry of the width of answers (aka difference between those who were qualifiers and the general rounds), we can get the variables realtively close to uncorrelated. Model may be over simplified but gets a good idea as to what happens given data on a particular question but also knowing that a person is or isn't a qualifier lead to different answers. Is hard threshold was set at 0.20 around the peak of prop_diff and easy threshold was at 0.6 and above. Big diff was set at 0.3 using the graph as well. Year did not show much effect on the questions as a whole.
+
+```{r echo=FALSE}
+ggplot(reg_only, aes(x = prop_correct, y = prop_diff)) + geom_point()
+summary(lm(prop_correct ~ big_diff + is_hard + is_easy + big_diff*is_hard + big_diff*is_easy, data = df_smaller))
+```
+
+Now we turn our focus onto the finals
+
+We want to figure out a way to determine how a person would perform in the final rounds given their scores in the regular season. Naturally we would expect those who can answer the harder questions in the regular season would likely do well in the finals. A person's ability to get hard or even medium questions correct in regular season would expect to do well in the finals round compared to someone who aces the easy one but struggles a bit more in the harder ones. We saw in the data exploration that variance of scores per year seem to point towards some potential effects.
+
+Looking at the harder questions distribution (again the categoory of questions where the general population scored below 0.35) we can see that this data distribution is quite similar for questions presented in the finals however it is slightly "easier".
+
+```{r echo=FALSE}
+hist(reg_only[reg_only$prop_correct < 0.35,]$champ_prop_correct, breaks = 32)
+```
+
+If we tune this a bit lower we may get a closer distribution. (0.2)
+
+```{r echo=FALSE}
+hist(reg_only[reg_only$prop_correct < 0.20,]$champ_prop_correct, breaks = 32)
+```
+
+So we look at players ability to answer questions with > 0.2 general correct rate. We noticed there may be negative effects with variance/sd. In addition, we will remove players with less than 450 questions answered as this tend to over inflate sd and variance or produce NA's (per year).
+
+Predicted chance of getting question right in finals (round 1 and 2) = score in regular season against questions with <0.2 success rate - (coeff) * sd of score over years.
+
+Now to test the model on the real championship data.
+
+```{r echo=FALSE}
+champ_prop_total <-
+  champ_data %>%
+  group_by(id, round)
+champ_prop_total = champ_prop_total[champ_prop_total$round %in% c(1,2),]
+
+champ_prop_total <-
+  champ_data %>%
+  group_by(id) %>%
+  summarise(prop_correct = mean(correct))
+
+champ_df = n_reg_prop_1[n_reg_prop_1$user_id %in% l,]
+champ_var <-
+  champ_df %>%
+  select(user_id, sd_score)
+
+champ_prop1 <-
+  champ_prop_total %>%
+  select(id, prop_correct)
+
+df <- 
+  df_test %>%
+  group_by(user_id, is_hard) %>%
+  summarise(prop_hard = mean(correct))
+df = df[df$is_hard == 1 & df$user_id %in% l, ]
+df$prop_final = champ_prop1$prop_correct
+df$sd = distinct(champ_var)$sd_score
+
+summary(lm(prop_final ~ sd + prop_hard, data = df))
+```
+
+Seems as through the effect of prop_hard or getting questions correct on ones that were typically harder in the regular season did not have a significant affect. Likewise the standard deviation effect was insignificant although it was quite negative. So from this analysis we cannot determine who had cheated or not.
+
+(Note, my computer crashed and I had lost quite a few of data tables that I tried to recode back in but somehow after at least 3 hrs of recoding gotten different results from before, and with each other as well, the values and blocks of data below were from that analysis were I had found that there was no ssignificance with prop_hard, but under type-1 alpha 0.05 there was significance with sd - However lessoned learned about how I need to keep better notes on what I code outside of R markdown.)
+
+Of those who qualified for 2020, we can see that there are some people with potential substantial effect on their expected performance relative to the sd in their yearly performance. Setting a hard threshold say -0.1 would get us around 20 or so of the 490 participants cheating. A threshold lower say -0.05 would get us around 100 of the 490 participants posibbly cheating.
+
+```{r echo=FALSE}
+n_reg_prop_1$potential_effect = -1.25214 * n_reg_prop_1$sd_score
+n_reg_prop_11 <-
+  n_reg_prop_1 %>%
+  select(user_id, potential_effect)
+poteffect_data = unique(n_reg_prop_11)
+
+head(poteffect_data[poteffect_data$user_id %in% qual_data$id,])
+```
+Now to predict number of questions each contestant will get in the upcoming championship.
+
+For this we will keep the variance effect, as to those who don't cheat, their scores will be nearly completely unimpacted. We will also use 2020 scores, by regressing 2018 scores onto themselves.
+
+```{r echo=FALSE}
+champion_data <-
+  champ_data %>%
+  group_by(id, year, round) %>%
+  summarise(prop_correct = mean(correct))
+a = champion_data[champion_data$year == 2018,]$id
+data_2018_reg_qualifiers_hard = df_test[df_test$user_id %in% a & df_test$is_hard == 1,]
+data_2018_reg_qualifiers_hard <-
+  data_2018_reg_qualifiers_hard %>%
+  group_by(user_id) %>%
+  summarise(prop_hard = mean(correct))
+
+champ_var1 = unique(champ_var[champ_var$user_id %in% a,])
+data_2018_reg_qualifiers_hard$sd_score = champ_var1$sd_score
+champion_data2018 = champion_data[champion_data$year == 2018,]
+
+summary(lm(champion_data2018[champion_data2018$round == 1,]$prop_correct ~ data_2018_reg_qualifiers_hard$prop_hard + data_2018_reg_qualifiers_hard$sd_score))
+```
+
+Now using this model on the 2020 data we get the following:
+
+```{r echo=FALSE}
+q = qual_data
+lst = c()
+for (i in q) {
+  lst = append(lst, i)
+}
+
+qual_2020data = df_test[df_test$user_id %in% lst & df_test$year == 2020,]
+
+qual_2020data <-
+  qual_2020data %>%
+  group_by(user_id) %>%
+  summarise(prop_hard = mean(correct))
+champ_var2020 = n_reg_prop_1[n_reg_prop_1$user_id %in% lst,]
+
+champ_var2020 <-
+  champ_var2020 %>%
+  select(user_id, sd_score)
+champ_var2020 = unique(champ_var2020)
+
+qual_2020data$predict = qual_2020data$prop_hard * 0.52358 - champ_var2020$sd_score*0.34891
+qual_2020data
+write.csv(qual_2020data, "my_predict.csv")
+```
+
+
+
+
+
+
+
+
+
+
